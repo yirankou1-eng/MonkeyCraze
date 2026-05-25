@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>猴骰菇</title>
+    <style>
+        /* 全局样式：白底、无点缀、禁止视口滚动与缩放 */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* 游戏主容器：垂直居中排列 */
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 5vh;
+            width: 100%;
+            max-width: 500px;
+            height: 100%;
+        }
+
+        /* 猴子区域与骰子区域的通用特征：相对定位，用于数字定位 */
+        .element-box {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 猴子图片自适应尺寸 */
+        #monkey-img {
+            width: 45vw;
+            max-width: 220px;
+            height: auto;
+            object-fit: contain;
+            display: block;
+        }
+
+        /* 骰子容器自适应尺寸与点击手势 */
+        #dice-container {
+            width: 25vw;
+            max-width: 110px;
+            height: 25vw;
+            max-height: 110px;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+
+        /* 动态生成的数字样式定义 */
+        .number {
+            position: absolute;
+            font-size: 3.5rem;
+            font-weight: 900;
+            color: #000000;
+            opacity: 0;
+            line-height: 1;
+            pointer-events: none;
+        }
+        /* 猴子数字在猴子正上方 */
+        #monkey-num {
+            bottom: 110%;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        /* 玩家数字在骰子正下方 */
+        #player-num {
+            top: 110%;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .show-num {
+            opacity: 1;
+        }
+
+        /* ================= 动画效果定义 ================= */
+        
+        /* 骰子滚动动画：旋转与轻微缩放 */
+        .rolling {
+            animation: diceRollEffect 0.5s linear infinite;
+        }
+        @keyframes diceRollEffect {
+            0% { transform: rotate(0deg) scale(1); }
+            50% { transform: rotate(180deg) scale(1.1); }
+            100% { transform: rotate(360deg) scale(1); }
+        }
+
+        /* 猴子弹跳动画 */
+        .bounce {
+            animation: monkeyBounceEffect 0.3s ease-out;
+        }
+        @keyframes monkeyBounceEffect {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-30px); }
+        }
+
+        /* 数字快速向上平移消失 */
+        .slide-up {
+            animation: slideUpEffect 0.3s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+        @keyframes slideUpEffect {
+            from { transform: translate(-50%, 0); opacity: 1; }
+            to { transform: translate(-50%, -100px); opacity: 0; }
+        }
+
+        /* 数字快速向下平移消失 */
+        .slide-down {
+            animation: slideDownEffect 0.3s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+        @keyframes slideDownEffect {
+            from { transform: translate(-50%, 0); opacity: 1; }
+            to { transform: translate(-50%, 100px); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <div class="element-box" id="monkey-box">
+            <div class="number" id="monkey-num">0</div>
+            <img src="monkey1.png" id="monkey-img" alt="猴子">
+        </div>
+        
+        <div class="element-box">
+            <div id="dice-container">
+                <svg id="dice-svg" viewBox="0 0 100 100" width="100%" height="100%"></svg>
+            </div>
+            <div class="number" id="player-num">0</div>
+        </div>
+    </div>
+
+    <audio id="audio-gunshot" src="gunshot.mp3" preload="auto"></audio>
+    <audio id="audio-scream" src="scream.mp3" preload="auto"></audio>
+
+    <script>
+        // 配置用户准备的文件路径
+        const ASSETS = {
+            monkey1: 'monkey1.png',          // 默认图标1
+            monkey2: 'monkey2.png',          // 开枪图标2
+            monkey3: 'monkey3.png',          // 笑容图标3
+            monkey4: 'monkey4.png',          // 爆炸图标4
+            monkeyGif: 'monkey_scream.gif',  // 喉叫GIF
+            gunshotAudio: 'audio-gunshot',   // 枪击音效元素ID
+            screamAudio: 'audio-scream'      // 喉叫音频元素ID
+        };
+
+        // DOM 元素缓存
+        const monkeyImg = document.getElementById('monkey-img');
+        const monkeyBox = document.getElementById('monkey-box');
+        const diceContainer = document.getElementById('dice-container');
+        const diceSvg = document.getElementById('dice-svg');
+        const monkeyNumEl = document.getElementById('monkey-num');
+        const playerNumEl = document.getElementById('player-num');
+        
+        const audioGunshot = document.getElementById(ASSETS.gunshotAudio);
+        const audioScream = document.getElementById(ASSETS.screamAudio);
+
+        // 游戏状态锁
+        let isRolling = false;
+
+        // 基础延时辅助函数
+        const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+        /**
+         * 纯矢量(SVG)绘制骰子面
+         * @param {number} num - 骰子点数 (1-6)
+         */
+        function drawDiceFace(num) {
+            // 定义标准100x100画布下各圆点的绝对坐标映射
+            const dotsMap = {
+                1: [[50, 50]],
+                2: [[25, 25], [75, 75]],
+                3: [[25, 25], [50, 50], [75, 75]],
+                4: [[25, 25], [75, 25], [25, 75], [75, 75]],
+                5: [[25, 25], [75, 25], [50, 50], [25, 75], [75, 75]],
+                6: [[25, 25], [75, 25], [25, 50], [75, 50], [25, 75], [75, 75]]
+            };
+
+            const dots = dotsMap[num] || [];
+            let dotsContent = '';
+            
+            // 循环遍历坐标生成圆点矢量标签
+            dots.forEach(([cx, cy]) => {
+                dotsContent += `<circle cx="${cx}" cy="${cy}" r="8" fill="#000000" />`;
+            });
+
+            // 组装完整的SVG代码（包含外框与圆点）
+            diceSvg.innerHTML = `
+                <rect x="4" y="4" width="92" height="92" rx="18" fill="#ffffff" stroke="#000000" stroke-width="6"/>
+                ${dotsContent}
+            `;
+        }
+
+        /**
+         * 模拟骰子翻滚动画过程
+         * @returns {Promise<number>} 返回最终摇出的随机点数
+         */
+        function executeDiceRollAnimation() {
+            return new Promise((resolve) => {
+                diceContainer.classList.add('rolling');
+                let frames = 0;
+                
+                // 定时器高频随机切换点数，模拟翻滚帧效果
+                const interval = setInterval(() => {
+                    const randomFace = Math.floor(Math.random() * 6) + 1;
+                    drawDiceFace(randomFace);
+                    frames++;
+                    
+                    if (frames >= 10) { // 滚动10帧后停止
+                        clearInterval(interval);
+                        diceContainer.classList.remove('rolling');
+                        const finalResult = Math.floor(Math.random() * 6) + 1;
+                        drawDiceFace(finalResult);
+                        resolve(finalResult);
+                    }
+                }, 60); // 每帧60毫秒
+            });
+        }
+
+        /**
+         * 触发猴子图标弹跳动画
+         */
+        function executeMonkeyBounce() {
+            return new Promise((resolve) => {
+                monkeyBox.classList.add('bounce');
+                setTimeout(() => {
+                    monkeyBox.classList.remove('bounce');
+                    resolve();
+                }, 300); // 与CSS内绑定的动画时长保持一致
+            });
+        }
+
+        /**
+         * 安全音频播放函数（重置当前播放进度）
+         * @param {HTMLAudioElement} audioEl 
+         */
+        function playAudio(audioEl) {
+            audioEl.currentTime = 0;
+            audioEl.play().catch(() => {
+                console.warn("浏览器策略拦截了未交互的音频播放");
+            });
+        }
+
+        /**
+         * 重置数字元素的动画类与显示状态
+         */
+        function resetNumbersUI() {
+            playerNumEl.className = 'number';
+            monkeyNumEl.className = 'number';
+            playerNumEl.textContent = '';
+            monkeyNumEl.textContent = '';
+        }
+
+        /**
+         * 核心游戏异步控制状态机
+         */
+        async function runGameRound() {
+            if (isRolling) return; // 状态锁生效中，拦截点击
+            isRolling = true;
+
+            // 初始化重置
+            resetNumbersUI();
+            monkeyImg.src = ASSETS.monkey1;
+
+            // 1. 玩家点击后，骰子翻滚
+            const playerResult = await executeDiceRollAnimation();
+            
+            // 2. 产生结果，骰子正下方显示玩家数字
+            playerNumEl.textContent = playerResult;
+            playerNumEl.classList.add('show-num');
+
+            // 3. 猴子图标弹跳一下
+            await executeMonkeyBounce();
+
+            // 4. 骰子重新转动（猴子回合）
+            const monkeyResult = await executeDiceRollAnimation();
+
+            // 5. 猴子正上方显示猴子摇出的数字
+            monkeyNumEl.textContent = monkeyResult;
+            monkeyNumEl.classList.add('show-num');
+
+            // 6. 停留0.7秒后进入判定逻辑
+            await sleep(700);
+
+            // ================= 逻辑判定分支 =================
+            if (playerResult === monkeyResult) {
+                // 分支A：平局 (二者数字相等)
+                playerNumEl.classList.add('slide-down');
+                monkeyNumEl.classList.add('slide-up');
+                await sleep(300); // 等待平移动画结束
+
+            } else if (monkeyResult > playerResult) {
+                // 分支B：猴子赢
+                monkeyImg.src = ASSETS.monkey2; // 切换至开枪图标2
+                playAudio(audioGunshot);         // 播放枪击音效
+                
+                await sleep(300);                // 持续0.3秒
+                monkeyImg.src = ASSETS.monkey3; // 切换至笑容图标3
+                
+                await sleep(300);                // 持续0.3秒
+                monkeyImg.src = ASSETS.monkey1; // 切换回默认图标1
+                playerNumEl.classList.add('slide-down');
+                monkeyNumEl.classList.add('slide-up'); // 数字平移消失
+                await sleep(300);
+
+            } else {
+                // 分支C：玩家赢
+                monkeyImg.src = ASSETS.monkeyGif; // 切换至喉叫GIF图片
+                playAudio(audioScream);            // 播放喉叫音频
+                
+                await sleep(1200);                 // 持续1.2秒
+                monkeyImg.src = ASSETS.monkey4;   // 切换至爆炸图标4
+                playAudio(audioGunshot);           // 播放枪击音效
+                
+                await sleep(300);                  // 持续0.3秒
+                playerNumEl.classList.add('slide-down');
+                monkeyNumEl.classList.add('slide-up'); // 数字平移消失
+                monkeyImg.src = ASSETS.monkey1;   // 恢复默认图标1
+                await sleep(300);
+            }
+
+            // 本轮结算彻底结束，释放状态锁，允许开始新一轮游戏
+            resetNumbersUI();
+            isRolling = false;
+        }
+
+        // 页面初始化与事件绑定
+        window.addEventListener('DOMContentLoaded', () => {
+            drawDiceFace(1); // 初始化骰子显示为1点
+            diceContainer.addEventListener('click', runGameRound);
+            diceContainer.addEventListener('touchstart', (e) => {
+                e.preventDefault(); // 阻止移动端双击缩放行为
+                runGameRound();
+            });
+        });
+    </script>
+</body>
+</html>
